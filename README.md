@@ -138,7 +138,7 @@ CONTRATOS.md.
              | TEXTO
              | ID
              | <chamada>
-             | ABRE_PAR <expressao> FECHA_PAR
+             | ABRE_PAR <expressao> FECHA_PAR```
 
 
 ## Entrega 3 — Análise Semântica
