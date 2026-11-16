@@ -70,7 +70,7 @@ CONTRATOS.md.
 
 ### Gramática implementada (EBNF)
 
-```
+```ebnf
 <programa> ::= { <funcao> } EOF
 
 <funcao> ::= FUNCAO <tipo_retorno> ID ABRE_PAR [ <parametros> ] FECHA_PAR <bloco>
