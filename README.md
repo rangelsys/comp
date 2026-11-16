@@ -70,7 +70,7 @@ CONTRATOS.md.
 
 ### Gramática implementada (EBNF)
 
-```ebnf
+```
 <programa> ::= { <funcao> } EOF
 
 <funcao> ::= FUNCAO <tipo_retorno> ID ABRE_PAR [ <parametros> ] FECHA_PAR <bloco>
@@ -138,8 +138,8 @@ CONTRATOS.md.
              | TEXTO
              | ID
              | <chamada>
-             | ABRE_PAR <expressao> FECHA_PAR```
-
+             | ABRE_PAR <expressao> FECHA_PAR
+```
 
 ## Entrega 3 — Análise Semântica
 
