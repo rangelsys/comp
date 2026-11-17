@@ -78,8 +78,6 @@ class AnalisadorSemantico:
             )
         self.atual.simbolos.append(simbolo)
 
-    # Primeira passada: todas as funções ficam conhecidas antes
-    # de qualquer corpo ser analisado (recursão direta e indireta).
     def coletar_funcoes(self):
         for funcao in self.arvore.funcoes:
             self.marcar(funcao)
@@ -105,7 +103,6 @@ class AnalisadorSemantico:
                 principal.linha
             )
 
-    # Segunda passada: parâmetros e bloco da função são escopos distintos.
     def analisar_funcoes(self):
         for funcao in self.arvore.funcoes:
             self.marcar(funcao)
@@ -159,13 +156,13 @@ class AnalisadorSemantico:
         if isinstance(comando, ast.Escreva):
             tipo = self.tipo_expressao(comando.expressao)
             if tipo == "vazio":
-                self.erro("nao e possivel escrever uma expressao vazia")
+                self.erro("nao e possivel escrever uma expressao vazia", getattr(comando.expressao, 'linha', getattr(comando, 'linha', self.linha_atual)))
             return False
 
         if isinstance(comando, ast.Se):
             tipo = self.tipo_expressao(comando.cond)
             if tipo != "logico":
-                self.erro("a condicao do se deve ser logica")
+                self.erro("a condicao do se deve ser logica", getattr(comando, 'linha', getattr(comando.cond, 'linha', self.linha_atual)))
 
             retorna_entao = self.analisar_bloco(comando.bloco_entao)
             if comando.bloco_senao is None:
@@ -176,7 +173,7 @@ class AnalisadorSemantico:
         if isinstance(comando, ast.Enquanto):
             tipo = self.tipo_expressao(comando.cond)
             if tipo != "logico":
-                self.erro("a condicao do enquanto deve ser logica")
+                self.erro("a condicao do enquanto deve ser logica", getattr(comando, 'linha', getattr(comando.cond, 'linha', self.linha_atual)))
             self.analisar_bloco(comando.bloco)
             return False
 
@@ -188,44 +185,47 @@ class AnalisadorSemantico:
             self.tipo_chamada(comando, como_comando=True)
             return False
 
-        self.erro("comando sem tratamento semantico")
+        self.erro("comando sem tratamento semantico", getattr(comando, 'linha', self.linha_atual))
 
     def analisar_declaracao(self, no):
         self.marcar(no)
-        simbolo = Simbolo(no.nome, "variavel", no.tipo, no.linha)
+        linha_no = getattr(no, 'linha', self.linha_atual)
+        simbolo = Simbolo(no.nome, "variavel", no.tipo, linha_no)
         self.declarar(simbolo)
         if no.expr is not None:
             tipo_expr = self.tipo_expressao(no.expr)
             if not self.compativel(no.tipo, tipo_expr):
                 self.erro(
                     f"nao e possivel atribuir {tipo_expr} a variavel "
-                    f"{no.nome} do tipo {no.tipo}", no.linha
+                    f"{no.nome} do tipo {no.tipo}", linha_no
                 )
 
     def analisar_atribuicao(self, no):
         self.marcar(no)
+        linha_no = getattr(no, 'linha', self.linha_atual)
         simbolo = self.atual.buscar(no.nome)
         if simbolo is None:
-            self.erro(f"variavel '{no.nome}' nao declarada", no.linha)
+            self.erro(f"variavel '{no.nome}' nao declarada", linha_no)
         if simbolo.categoria == "funcao":
-            self.erro(f"'{no.nome}' nao e uma variavel", no.linha)
+            self.erro(f"'{no.nome}' nao e uma variavel", linha_no)
 
         tipo_expr = self.tipo_expressao(no.expr)
         if not self.compativel(simbolo.tipo, tipo_expr):
-            self.erro(f"tipo incompativel na atribuicao de '{no.nome}'", no.linha)
+            self.erro(f"tipo incompativel na atribuicao de '{no.nome}'", linha_no)
 
     def analisar_retorno(self, no):
         self.marcar(no)
+        linha_no = getattr(no, 'linha', self.linha_atual)
         tipo_funcao = self.tipo_retorno_atual
         if no.expr is None:
             if tipo_funcao != "vazio":
-                self.erro("funcao deve retornar um valor")
+                self.erro("funcao deve retornar um valor", linha_no)
         else:
             if tipo_funcao == "vazio":
-                self.erro("funcao vazio nao pode retornar um valor")
+                self.erro("funcao vazio nao pode retornar um valor", linha_no)
             tipo_expr = self.tipo_expressao(no.expr)
             if not self.compativel(tipo_funcao, tipo_expr):
-                self.erro("tipo de retorno incompativel")
+                self.erro("tipo de retorno incompativel", linha_no)
 
     @staticmethod
     def numerico(tipo):
@@ -239,6 +239,7 @@ class AnalisadorSemantico:
 
     def tipo_expressao(self, no):
         self.marcar(no)
+        linha_no = getattr(no, 'linha', self.linha_atual)
 
         if isinstance(no, ast.Literal):
             return no.tipo
@@ -246,9 +247,9 @@ class AnalisadorSemantico:
         if isinstance(no, ast.Variavel):
             simbolo = self.atual.buscar(no.nome)
             if simbolo is None:
-                self.erro(f"variavel '{no.nome}' nao declarada")
+                self.erro(f"variavel '{no.nome}' nao declarada", linha_no)
             if simbolo.categoria == "funcao":
-                self.erro(f"'{no.nome}' e uma funcao, nao uma variavel")
+                self.erro(f"'{no.nome}' e uma funcao, nao uma variavel", linha_no)
             return simbolo.tipo
 
         if isinstance(no, ast.Chamada):
@@ -258,13 +259,11 @@ class AnalisadorSemantico:
             tipo = self.tipo_expressao(no.operando)
             if no.op == "nao":
                 if tipo != "logico":
-                    self.marcar(no)
-                    self.erro("operador nao exige operando logico")
+                    self.erro("operador nao exige operando logico", linha_no)
                 return "logico"
             if no.op == "-":
                 if not self.numerico(tipo):
-                    self.marcar(no)
-                    self.erro("menos unario exige operando numerico")
+                    self.erro("menos unario exige operando numerico", linha_no)
                 return tipo
 
         if isinstance(no, ast.Binario):
@@ -275,7 +274,7 @@ class AnalisadorSemantico:
 
             if op in ("e", "ou"):
                 if esquerda != "logico" or direita != "logico":
-                    self.erro(f"operador '{op}' exige operandos logicos")
+                    self.erro(f"operador '{op}' exige operandos logicos", linha_no)
                 return "logico"
 
             if op in ("==", "!="):
@@ -283,11 +282,11 @@ class AnalisadorSemantico:
                     self.numerico(esquerda) and self.numerico(direita)
                 ):
                     return "logico"
-                self.erro(f"tipos incompativeis para operador '{op}'")
+                self.erro(f"tipos incompativeis para operador '{op}'", linha_no)
 
             if op in ("<", "<=", ">", ">="):
                 if not self.numerico(esquerda) or not self.numerico(direita):
-                    self.erro(f"operador '{op}' exige operandos numericos")
+                    self.erro(f"operador '{op}' exige operandos numericos", linha_no)
                 return "logico"
 
             if op == "+":
@@ -295,21 +294,21 @@ class AnalisadorSemantico:
                     return "texto"
                 if self.numerico(esquerda) and self.numerico(direita):
                     return self.tipo_numerico(esquerda, direita)
-                self.erro("operandos incompativeis para '+'")
+                self.erro("operandos incompativeis para '+'", linha_no)
 
             if op == "%":
                 if esquerda != "inteiro" or direita != "inteiro":
-                    self.erro("operador '%' exige dois inteiros")
+                    self.erro("operador '%' exige dois inteiros", linha_no)
                 return "inteiro"
 
             if op in ("-", "*", "/"):
                 if not self.numerico(esquerda) or not self.numerico(direita):
-                    self.erro(f"operador '{op}' exige operandos numericos")
+                    self.erro(f"operador '{op}' exige operandos numericos", linha_no)
                 return self.tipo_numerico(esquerda, direita)
 
-            self.erro(f"operador desconhecido '{op}'")
+            self.erro(f"operador desconhecido '{op}'", linha_no)
 
-        self.erro("expressao sem tratamento semantico")
+        self.erro("expressao sem tratamento semantico", linha_no)
 
     @staticmethod
     def tipo_numerico(esquerda, direita):
@@ -319,15 +318,17 @@ class AnalisadorSemantico:
 
     def tipo_chamada(self, no, como_comando=False):
         self.marcar(no)
+        linha_no = getattr(no, 'linha', self.linha_atual)
         funcao = self.global_.buscar_local(no.nome)
+        
         if funcao is None:
-            self.erro(f"funcao '{no.nome}' nao declarada", no.linha)
+            self.erro(f"funcao '{no.nome}' nao declarada", linha_no)
         if funcao.categoria != "funcao":
-            self.erro(f"'{no.nome}' nao e uma funcao", no.linha)
+            self.erro(f"'{no.nome}' nao e uma funcao", linha_no)
         if len(no.args) != len(funcao.parametros):
             self.erro(
                 f"quantidade incorreta de argumentos na funcao '{no.nome}'",
-                no.linha
+                linha_no
             )
 
         for indice, argumento in enumerate(no.args):
@@ -336,13 +337,13 @@ class AnalisadorSemantico:
             if not self.compativel(tipo_parametro, tipo_argumento):
                 self.erro(
                     f"tipo incorreto no argumento {indice + 1} "
-                    f"da funcao '{no.nome}'", no.linha
+                    f"da funcao '{no.nome}'", linha_no
                 )
 
         if funcao.tipo == "vazio" and not como_comando:
             self.erro(
                 f"funcao vazio '{no.nome}' nao pode ser usada em expressao",
-                no.linha
+                linha_no
             )
         return funcao.tipo
 

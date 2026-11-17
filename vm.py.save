@@ -1,0 +1,201 @@
+"""
+Entrega 4, terceira metade — a máquina virtual.
+Lê o .mplb e executa as instruções simulando processador e memória.
+"""
+
+import ast
+import sys
+from mplc.erros import NaoImplementado
+
+def executar(texto_mplb, saida):
+    """Executa o bytecode. Escreve o que o programa imprimir em `saida`."""
+    instrucoes = []
+    
+    # Substituímos o JSON pelo ast.literal_eval. 
+    # Ele lê qualquer formato (aspas simples, tuplas, listas) sem quebrar!
+    for linha in texto_mplb:
+        linha = linha.strip()
+        if linha:
+            try:
+                instrucoes.append(ast.literal_eval(linha))
+            except Exception:
+                pass
+            
+    # 1. Pre-processar labels e funções para descobrir os endereços de pulo
+    labels = {}
+    funcs = {}  # nome -> (endereco_pc, nomes_dos_parametros)
+    
+    for i, inst in enumerate(instrucoes):
+        if inst[0] == 'LABEL':
+            labels[inst[1]] = i
+        elif inst[0] == 'FUNCAO':
+            nome = inst[1]
+            nomes_params = [p[0] for p in inst[3]]
+            funcs[nome] = (i, nomes_params)
+            
+    if 'principal' not in funcs:
+        return
+        
+    # 2. Setup Inicial da VM
+    pc = funcs['principal'][0]
+    
+    # A Pilha de Registros de Ativação (Frames)
+    pilha = [{'locais': {}, 'ret': -1, 'dest': None}]
+    
+    # Pilha de operandos apenas para transição de parâmetros na chamada
+    pilha_operandos = []
+    
+    def get_val(v, locais):
+        """Busca o valor da variável ou converte o literal em tipo nativo do Python"""
+        if isinstance(v, str):
+            if v in locais:
+                return locais[v]
+            if v == "verdadeiro": return True
+            if v == "falso": return False
+            if v.startswith('"'):
+                return v[1:-1].replace('\\n', '\n').replace('\\t', '\t').replace('\\"', '"').replace('\\\\', '\\')
+            
+            try:
+                return int(v)
+            except ValueError:
+                try:
+                    return float(v)
+                except ValueError:
+                    return v
+        return v
+
+    # 3. Laço de Execução (Fetch, Decode, Execute)
+    while pc < len(instrucoes):
+        inst = instrucoes[pc]
+        op = inst[0]
+        
+        # Variáveis locais do escopo atual
+        locais = pilha[-1]['locais']
+        
+        if op == 'COPIA':
+            locais[inst[1]] = get_val(inst[2], locais)
+            
+        elif op == 'BINARIO':
+            dest = inst[1]
+            esq = get_val(inst[2], locais)
+            operador = inst[3]
+            dir_val = get_val(inst[4], locais)
+            
+            if operador == '+': 
+                res = esq + dir_val
+            elif operador == '-': 
+                res = esq - dir_val
+            elif operador == '*': 
+                res = esq * dir_val
+            elif operador == '/':
+                # Armadilha 3: Divisão por Zero
+                if dir_val == 0:
+                    sys.exit(2)
+                # Armadilha 1: Divisão inteira trunca pro zero
+                if type(esq) is int and type(dir_val) is int:
+                    res = int(esq / dir_val)
+                else:
+                    res = esq / dir_val
+            elif operador == '%':
+                # Armadilha 3: Divisão por Zero no Resto
+                if dir_val == 0:
+                    sys.exit(2)
+                # Armadilha 2: Sinal do resto acompanha o dividendo
+                res = esq - int(esq / dir_val) * dir_val
+            elif operador == '==': res = (esq == dir_val)
+            elif operador == '!=': res = (esq != dir_val)
+            elif operador == '<':  res = (esq < dir_val)
+            elif operador == '<=': res = (esq <= dir_val)
+            elif operador == '>':  res = (esq > dir_val)
+            elif operador == '>=': res = (esq >= dir_val)
+            elif operador == 'e':  res = (esq and dir_val)
+            elif operador == 'ou': res = (esq or dir_val)
+            else: res = None
+            
+            locais[dest] = res
+            
+        elif op == 'UNARIO':
+            dest = inst[1]
+            operador = inst[2]
+            val = get_val(inst[3], locais)
+            
+            if operador == '-': res = -val
+            elif operador == 'nao': res = not val
+            
+            locais[dest] = res
+            
+        elif op == 'JUMP':
+            pc = labels[inst[1]]
+            continue
+            
+        elif op == 'JUMP_FALSO':
+            cond = get_val(inst[1], locais)
+            if not cond:
+                pc = labels[inst[2]]
+                continue
+                
+        elif op == 'PARAM':
+            pilha_operandos.append(get_val(inst[1], locais))
+            
+        elif op == 'CHAMA':
+            dest = inst[1]
+            nome_func = inst[2]
+            num_args = inst[3]
+            
+            # Deteccao de Estouro de Pilha
+            if len(pilha) > 1000:
+                sys.exit(2)
+                
+            # Coleta os argumentos na ordem certa da pilha transitória
+            args_vals = []
+            for _ in range(num_args):
+                args_vals.insert(0, pilha_operandos.pop())
+                
+            target_pc, params_nomes = funcs[nome_func]
+            
+            # Injeta os argumentos nos parâmetros (Registro de Ativação novo)
+            novo_locais = {}
+            for nome_p, val_p in zip(params_nomes, args_vals):
+                novo_locais[nome_p] = val_p
+                
+            # Empilha o Frame (Armadilha 3: Recursão Funcionando)
+            pilha.append({
+                'locais': novo_locais,
+                'ret': pc + 1,  # Ponto de volta é a instrução seguinte
+                'dest': dest    # Onde gravar o resultado na volta
+            })
+            
+            pc = target_pc
+            continue
+            
+        elif op == 'RETORNE':
+            ret_val = get_val(inst[1], locais) if inst[1] is not None else None
+            
+            frame = pilha.pop()
+            if not pilha:
+                # Retornou da função principal, fim do programa
+                break 
+            
+            # Restaura a execução para quem chamou
+            pc = frame['ret']
+            if frame['dest']:
+                pilha[-1]['locais'][frame['dest']] = ret_val
+            continue
+            
+        elif op == 'ESCREVA':
+            val = get_val(inst[1], locais)
+            
+            # Tipa e converte o output para o formato esperado pela MPL
+            if val is True: 
+                saida_str = "verdadeiro"
+            elif val is False: 
+                saida_str = "falso"
+            elif type(val) is float:
+                saida_str = f"{val:.6f}"
+            else:
+                saida_str = str(val)
+                
+            saida.write(saida_str + "\n")
+            
+        # Vai para a próxima instrução sequencial
+        pc += 1
